@@ -57,7 +57,7 @@ object LocalResolver : LocalDNSTransport {
                 DnsResolver.getInstance().rawQuery(
                     defaultNetwork,
                     message,
-                    DnsResolver.FLAG_NO_RETRY,
+                    0, // fork: was DnsResolver.FLAG_NO_RETRY; let the system resolver try servers in order
                     Dispatchers.IO.asExecutor(),
                     signal,
                     callback,
@@ -113,7 +113,7 @@ object LocalResolver : LocalDNSTransport {
                             defaultNetwork,
                             domain,
                             type,
-                            DnsResolver.FLAG_NO_RETRY,
+                            0, // fork: was DnsResolver.FLAG_NO_RETRY; let the system resolver try servers in order
                             Dispatchers.IO.asExecutor(),
                             signal,
                             callback,
@@ -122,7 +122,7 @@ object LocalResolver : LocalDNSTransport {
                         DnsResolver.getInstance().query(
                             defaultNetwork,
                             domain,
-                            DnsResolver.FLAG_NO_RETRY,
+                            0, // fork: was DnsResolver.FLAG_NO_RETRY; let the system resolver try servers in order
                             Dispatchers.IO.asExecutor(),
                             signal,
                             callback,
