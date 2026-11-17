@@ -79,6 +79,7 @@ release 构建需要签名：把 keystore 放到 `app/release.keystore`，并在
 `.github/workflows/build.yml` 移植自 sing-box v1.14.4 的 `build_android_library` / `build_android` 两个 job：
 按 4 个架构并行编译 libbox，用 `merge_aar` 合并，再打包 `other`（Android 7+）和 `other-legacy`（Android 5/6）两种 APK，作为 Artifacts 上传。
 推送到本分支或手动运行（Actions → Build → Run workflow）都会触发。
+手动运行时勾选 `publish`，会把 release 签名的 APK 发布到标签 `1.14.4-no-retry` 的 GitHub Release（已存在则删除后重建）。
 
 签名通过仓库 secrets 配置：
 

@@ -6,9 +6,15 @@ on:
   push:
     branches: [no-retry-1.14.4]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "发布到 GitHub Release（需要已配置签名 secrets）"
+        type: boolean
+        default: false
 
 env:
   SING_BOX_REF: v1.14.4
+  RELEASE_TAG: 1.14.4-no-retry
   GO_VERSION: 1.26.10
 
 jobs:
@@ -146,3 +152,42 @@ jobs:
           name: SFA-apks-${{ matrix.variant }}-${{ steps.signing.outputs.type }}
           path: sfa/app/build/outputs/apk/${{ matrix.dir }}/${{ steps.signing.outputs.type }}/*.apk
           if-no-files-found: error
+
+  publish:
+    name: Publish release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    needs: build_android
+    permissions:
+      contents: write
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: SFA-apks-*-release
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          ls dist/*.apk >/dev/null 2>&1 || { echo "::error::没有 release APK，检查签名 secrets"; exit 1; }
+          cat > notes.md << EOF
+          基于 sing-box v1.14.4 的 SFA，去掉 \`LocalResolver\` 中的 \`DnsResolver.FLAG_NO_RETRY\`，
+          避免 HyperOS/MIUI 追加的 114.114.114.114 被系统解析器随机选中。原因和改动见 README。
+
+          提交：${GITHUB_SHA}
+
+          - \`SFA-1.14.4-*.apk\`：Android 7+
+          - \`SFA-1.14.4-legacy-android-5-*.apk\`：Android 5/6
+
+          与官方版签名不同，需要先卸载官方版（请先导出配置）。
+          EOF
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+          fi
+          gh release create "$RELEASE_TAG" dist/*.apk \
+            --target "$GITHUB_SHA" \
+            --title "SFA $RELEASE_TAG" \
+            --notes-file notes.md
