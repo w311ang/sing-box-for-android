@@ -1,0 +1,148 @@
+# 移植自 SagerNet/sing-box v1.14.4 的 .github/workflows/build.yml
+# （build_android_library + build_android 两个 job），改为在 SFA 仓库中运行。
+name: Build
+
+on:
+  push:
+    branches: [no-retry-1.14.4]
+  workflow_dispatch:
+
+env:
+  SING_BOX_REF: v1.14.4
+  GO_VERSION: 1.26.10
+
+jobs:
+  build_android_library:
+    name: Build Android library (${{ matrix.go_arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go_arch: ["386", amd64, arm, arm64]
+    steps:
+      - name: Checkout sing-box
+        uses: actions/checkout@v5
+        with:
+          repository: SagerNet/sing-box
+          ref: ${{ env.SING_BOX_REF }}
+          fetch-depth: 1
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+      - name: Setup OpenJDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set tag
+        # build_libbox 通过 git describe 读取版本号
+        run: git tag "$SING_BOX_REF" -f
+      - name: Build library
+        run: |-
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          go run ./cmd/internal/build_libbox -target android -platform android/${{ matrix.go_arch }}
+          mkdir -p dist/${{ matrix.go_arch }}
+          mv libbox.aar libbox-legacy.aar dist/${{ matrix.go_arch }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Upload library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbox-android-${{ matrix.go_arch }}
+          path: dist
+          compression-level: 0
+
+  build_android:
+    name: Build Android (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    needs: build_android_library
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: other
+            flavor: Other
+            dir: other
+          - variant: other-legacy
+            flavor: OtherLegacy
+            dir: otherLegacy
+    steps:
+      - name: Checkout SFA
+        uses: actions/checkout@v5
+        with:
+          path: sfa
+      - name: Checkout sing-box
+        uses: actions/checkout@v5
+        with:
+          repository: SagerNet/sing-box
+          ref: ${{ env.SING_BOX_REF }}
+          fetch-depth: 1
+          path: sing-box
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: sing-box/go.sum
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+      - name: Setup OpenJDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Download libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: libbox-android-*
+          path: libbox-inputs
+          merge-multiple: true
+      - name: Merge libraries
+        working-directory: sing-box
+        run: |-
+          go run ./cmd/internal/merge_aar -output ../libbox.aar ../libbox-inputs/*/libbox.aar
+          go run ./cmd/internal/merge_aar -output ../libbox-legacy.aar ../libbox-inputs/*/libbox-legacy.aar
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Setup signing
+        id: signing
+        # 配置了 KEYSTORE（release.keystore 的 base64）和 LOCAL_PROPERTIES 两个 secret 时编译 release，
+        # 否则退回 debug（每次运行签名不同，无法覆盖安装）
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+        run: |-
+          if [ -n "$KEYSTORE" ] && [ -n "$LOCAL_PROPERTIES" ]; then
+            echo "$KEYSTORE" | base64 -d > sfa/app/release.keystore
+            echo "type=release" >> "$GITHUB_OUTPUT"
+            echo "task=Release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::KEYSTORE / LOCAL_PROPERTIES secret 未配置，编译 debug 版本"
+            echo "type=debug" >> "$GITHUB_OUTPUT"
+            echo "task=Debug" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        working-directory: sfa
+        run: |-
+          mkdir -p app/libs
+          cp ../libbox.aar ../libbox-legacy.aar app/libs
+          ./gradlew --build-cache --parallel :app:assemble${{ matrix.flavor }}${{ steps.signing.outputs.task }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFA-apks-${{ matrix.variant }}-${{ steps.signing.outputs.type }}
+          path: sfa/app/build/outputs/apk/${{ matrix.dir }}/${{ steps.signing.outputs.type }}/*.apk
+          if-no-files-found: error

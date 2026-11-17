@@ -74,6 +74,25 @@ release 构建需要签名：把 keystore 放到 `app/release.keystore`，并在
 
 上游 CI 还会运行 `go run ./cmd/internal/update_android_version --ci` 根据 git 标签改写 `version.properties`；本分支已经是 `1.14.4`（versionCode 746），无需执行。
 
+### GitHub Actions
+
+`.github/workflows/build.yml` 移植自 sing-box v1.14.4 的 `build_android_library` / `build_android` 两个 job：
+按 4 个架构并行编译 libbox，用 `merge_aar` 合并，再打包 `other`（Android 7+）和 `other-legacy`（Android 5/6）两种 APK，作为 Artifacts 上传。
+推送到本分支或手动运行（Actions → Build → Run workflow）都会触发。
+
+签名通过仓库 secrets 配置：
+
+- `KEYSTORE`：`base64 -w0 release.keystore` 的结果
+- `LOCAL_PROPERTIES`：内容为下面三行的文件再 base64 一次
+
+```properties
+KEYSTORE_PASS=...
+ALIAS_NAME=...
+ALIAS_PASS=...
+```
+
+两个 secret 都配置时编译 release；否则退回 debug 版本，此时每次运行都用新生成的调试签名，不能覆盖安装上一次的 APK。
+
 ---
 
 # SFA
